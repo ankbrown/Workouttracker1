@@ -84,8 +84,9 @@ const PLATE={Andrew:"#4C8DFF",Tshristi:"#F5B72E"};
 const KEY="hd-sessions-v1";
 
 let sessions=[]; try{sessions=JSON.parse(localStorage.getItem(KEY))||[]}catch(e){}
-let tab="log", logPerson="Andrew", logWorkout=1, progPerson="Andrew", progEx=WORKOUTS[1].ex[0], openHist=null;
-let draft={}, draftNotes="", draftDate=today();
+let tab="log", logPerson="Andrew", logWorkout=1, progPerson="Andrew", progEx=WORKOUTS[1].ex[0], openHist=null, editId=null, editSess=null;
+let drafts={Andrew:{},Tshristi:{}}, draftNotes={Andrew:"",Tshristi:""}, draftDate=today();
+function D(){return drafts[logPerson][logWorkout]||(drafts[logPerson][logWorkout]={})}
 
 function today(){return new Date().toISOString().slice(0,10)}
 function fmt(iso){const d=new Date(iso+"T12:00:00");return d.toLocaleDateString(undefined,{month:"short",day:"numeric"})}
@@ -120,7 +121,7 @@ function logView(){
   h+=`<div class="seg-row">`+[1,2,3].map(n=>`<button class="seg log-w ${logWorkout===n?"on-w":""}" data-w="${n}"><small>W${n}</small>${WORKOUTS[n].name}</button>`).join("")+`</div>`;
   h+=`<div class="meta-row"><label class="meta-label">Date <input type="date" id="date" value="${draftDate}"></label><div class="rep-badge">Target ${w.reps} reps</div></div>`;
   w.ex.forEach((ex,i)=>{
-    const last=lastFor(logPerson,ex), sug=SUGGESTED[logPerson][ex], d=draft[ex]||{};
+    const last=lastFor(logPerson,ex), sug=SUGGESTED[logPerson][ex], d=D()[ex]||{};
     const hint=last?`Last: ${esc(last.weight)} × ${esc(last.reps)} (${fmt(last.date)})`:`Comeback suggestion: ${sug}${sug<0?" (assisted)":" lb"}`;
     const fs=d.failure?`style="background:${PLATE[logPerson]};color:#111;border-color:${PLATE[logPerson]}"`:"";
     h+=`<div class="ex-card"><div class="ex-name">${i+1}. ${ex}</div><div class="ex-hint">${hint}</div>
@@ -131,7 +132,7 @@ function logView(){
         <button class="fail" data-ex="${esc(ex)}" ${fs}>Failure</button>
       </div></div>`;
   });
-  h+=`<textarea id="notes" rows="2" placeholder="Notes — form cues, machine settings, how it felt…">${esc(draftNotes)}</textarea>`;
+  h+=`<textarea id="notes" rows="2" placeholder="Notes — form cues, machine settings, how it felt…">${esc(draftNotes[logPerson])}</textarea>`;
   h+=`<button class="save" id="save">Save workout</button>`;
   h+=`<div class="data-btns"><button class="data-btn" id="export">Export data</button><button class="data-btn" id="import">Import data</button></div>
       <input type="file" id="importFile" class="hidden" accept=".json,application/json">`;
@@ -174,10 +175,26 @@ function histView(){
   return list.map(s=>{
     const open=openHist===s.id;
     let body="";
-    if(open){
+    if(open&&editId===s.id){
+      const ez=editSess;
+      body=`<div class="hist-body"><label class="meta-label" style="margin:8px 0">Date <input type="date" id="e-date" value="${ez.date}"></label>`;
+      body+=WORKOUTS[s.workout].ex.map(ex=>{
+        const e=ez.entries.find(x=>x.exercise===ex)||{weight:"",reps:"",failure:false};
+        const fs=e.failure?`style="background:${PLATE[s.person]};color:#111;border-color:${PLATE[s.person]}"`:"";
+        return `<div style="margin:8px 0"><div style="font-size:13px;font-weight:700;margin-bottom:5px">${esc(ex)}</div>
+          <div class="ex-inputs">
+          <input class="num e-wt" data-ex="${esc(ex)}" inputmode="decimal" placeholder="wt" value="${esc(e.weight)}">
+          <span class="unit">lb ×</span>
+          <input class="num e-rp" data-ex="${esc(ex)}" inputmode="numeric" placeholder="reps" value="${esc(e.reps)}">
+          <button class="fail e-fail" data-ex="${esc(ex)}" ${fs}>Failure</button></div></div>`;
+      }).join("");
+      body+=`<textarea id="e-notes" rows="2" placeholder="Notes…">${esc(ez.notes||"")}</textarea>
+        <div class="data-btns"><button class="save" id="e-save" style="margin-top:8px;padding:12px 0;font-size:14px">Save changes</button>
+        <button class="data-btn" id="e-cancel" style="margin-top:8px">Cancel</button></div></div>`;
+    }else if(open){
       body=`<div class="hist-body">`+s.entries.map(e=>`<div class="hist-row"><span>${esc(e.exercise)}</span><span class="hist-nums">${esc(e.weight)} × ${esc(e.reps)} ${e.failure?"✓F":""}</span></div>`).join("");
       if(s.notes)body+=`<div class="hist-notes">“${esc(s.notes)}”</div>`;
-      body+=`<button class="del" data-id="${s.id}">Delete entry</button></div>`;
+      body+=`<div class="data-btns"><button class="data-btn edit" data-id="${s.id}">Edit</button><button class="del" data-id="${s.id}" style="margin-top:0;flex:1">Delete entry</button></div></div>`;
     }
     return `<div class="hist-card"><button class="hist-head" data-id="${s.id}">
       <span class="dot" style="background:${PLATE[s.person]}"></span>
@@ -189,23 +206,46 @@ function histView(){
 function bind(){
   document.querySelectorAll(".log-p").forEach(b=>b.onclick=()=>{logPerson=b.dataset.p;render()});
   document.querySelectorAll(".prog-p").forEach(b=>b.onclick=()=>{progPerson=b.dataset.p;render()});
-  document.querySelectorAll(".log-w").forEach(b=>b.onclick=()=>{logWorkout=+b.dataset.w;draft={};render()});
+  document.querySelectorAll(".log-w").forEach(b=>b.onclick=()=>{logWorkout=+b.dataset.w;render()});
   const date=document.getElementById("date"); if(date)date.onchange=e=>draftDate=e.target.value;
-  document.querySelectorAll(".wt").forEach(i=>i.oninput=e=>{draft[i.dataset.ex]={...(draft[i.dataset.ex]||{}),weight:e.target.value}});
-  document.querySelectorAll(".rp").forEach(i=>i.oninput=e=>{draft[i.dataset.ex]={...(draft[i.dataset.ex]||{}),reps:e.target.value}});
-  document.querySelectorAll(".fail").forEach(b=>b.onclick=()=>{const d=draft[b.dataset.ex]||{};d.failure=!d.failure;draft[b.dataset.ex]=d;render()});
-  const notes=document.getElementById("notes"); if(notes)notes.oninput=e=>draftNotes=e.target.value;
+  document.querySelectorAll(".wt").forEach(i=>i.oninput=e=>{D()[i.dataset.ex]={...(D()[i.dataset.ex]||{}),weight:e.target.value}});
+  document.querySelectorAll(".rp").forEach(i=>i.oninput=e=>{D()[i.dataset.ex]={...(D()[i.dataset.ex]||{}),reps:e.target.value}});
+  document.querySelectorAll(".fail").forEach(b=>b.onclick=()=>{const d=D()[b.dataset.ex]||{};d.failure=!d.failure;D()[b.dataset.ex]=d;render()});
+  const notes=document.getElementById("notes"); if(notes)notes.oninput=e=>draftNotes[logPerson]=e.target.value;
   const save=document.getElementById("save");
   if(save)save.onclick=()=>{
     const w=WORKOUTS[logWorkout];
-    const entries=w.ex.map(ex=>({exercise:ex,weight:(draft[ex]?.weight??"").trim(),reps:(draft[ex]?.reps??"").trim(),failure:!!draft[ex]?.failure})).filter(e=>e.weight!==""||e.reps!=="");
+    const entries=w.ex.map(ex=>({exercise:ex,weight:(D()[ex]?.weight??"").trim(),reps:(D()[ex]?.reps??"").trim(),failure:!!D()[ex]?.failure})).filter(e=>e.weight!==""||e.reps!=="");
     if(!entries.length){toast("Enter at least one set");return}
-    sessions.push({id:Date.now().toString(36),date:draftDate,person:logPerson,workout:logWorkout,workoutName:w.name,entries,notes:draftNotes.trim()});
+    sessions.push({id:Date.now().toString(36),date:draftDate,person:logPerson,workout:logWorkout,workoutName:w.name,entries,notes:draftNotes[logPerson].trim()});
     sessions.sort((a,b)=>a.date<b.date?-1:1);
-    persist(); draft={}; draftNotes=""; draftDate=today();
-    toast("Workout saved"); tab="history"; render();
+    persist(); drafts[logPerson][logWorkout]={}; draftNotes[logPerson]="";
+    toast(logPerson+" saved"); render();
   };
-  document.querySelectorAll(".hist-head").forEach(b=>b.onclick=()=>{openHist=openHist===b.dataset.id?null:b.dataset.id;render()});
+  document.querySelectorAll(".hist-head").forEach(b=>b.onclick=()=>{openHist=openHist===b.dataset.id?null:b.dataset.id;editId=null;editSess=null;render()});
+  document.querySelectorAll(".edit").forEach(b=>b.onclick=()=>{
+    const s=sessions.find(x=>x.id===b.dataset.id); if(!s)return;
+    editId=s.id; editSess=JSON.parse(JSON.stringify(s)); render();
+  });
+  const eDate=document.getElementById("e-date"); if(eDate)eDate.onchange=e=>editSess.date=e.target.value;
+  const eNotes=document.getElementById("e-notes"); if(eNotes)eNotes.oninput=e=>editSess.notes=e.target.value;
+  function eEntry(ex){let e=editSess.entries.find(x=>x.exercise===ex);if(!e){e={exercise:ex,weight:"",reps:"",failure:false};editSess.entries.push(e)}return e}
+  document.querySelectorAll(".e-wt").forEach(i=>i.oninput=e=>{eEntry(i.dataset.ex).weight=e.target.value});
+  document.querySelectorAll(".e-rp").forEach(i=>i.oninput=e=>{eEntry(i.dataset.ex).reps=e.target.value});
+  document.querySelectorAll(".e-fail").forEach(b=>b.onclick=()=>{const e=eEntry(b.dataset.ex);e.failure=!e.failure;render()});
+  const eSave=document.getElementById("e-save");
+  if(eSave)eSave.onclick=()=>{
+    editSess.entries=editSess.entries.map(e=>({...e,weight:String(e.weight).trim(),reps:String(e.reps).trim()})).filter(e=>e.weight!==""||e.reps!=="");
+    if(!editSess.entries.length){toast("Enter at least one set");return}
+    editSess.notes=(editSess.notes||"").trim();
+    const i=sessions.findIndex(x=>x.id===editId);
+    if(i>-1)sessions[i]=editSess;
+    sessions.sort((a,b)=>a.date<b.date?-1:1);
+    persist(); editId=null; editSess=null;
+    toast("Updated"); render();
+  };
+  const eCancel=document.getElementById("e-cancel");
+  if(eCancel)eCancel.onclick=()=>{editId=null;editSess=null;render()};
   document.querySelectorAll(".del").forEach(b=>b.onclick=()=>{sessions=sessions.filter(s=>s.id!==b.dataset.id);persist();toast("Deleted");render()});
   const exSel=document.getElementById("exSel"); if(exSel)exSel.onchange=e=>{progEx=e.target.value;render()};
   const exp=document.getElementById("export");
